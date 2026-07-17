@@ -41,17 +41,25 @@ $body = @{
     password = $cred.GetNetworkCredential().Password
 }
 
-$maxAttempts = 5
+# 授業開始直後などアクセスが集中してポータルが混雑している時間帯でも
+# 諦めずに再試行し続けられるよう、待ち時間を徐々に延ばしながら粘る。
+$maxAttempts    = 10
+$backoffSeconds = @(5, 10, 15, 20, 30, 30, 45, 45, 60)  # 各試行の後の待ち時間(混雑緩和を待つ)
+
 for ($i = 1; $i -le $maxAttempts; $i++) {
     try {
         $resp = Invoke-WebRequest -Uri $PortalUrl -Method Post -Body $body -UseBasicParsing -TimeoutSec 15
-        Write-Log ("login POST attempt {0}: HTTP {1}" -f $i, $resp.StatusCode)
+        Write-Log ("login POST attempt {0}/{1}: HTTP {2}" -f $i, $maxAttempts, $resp.StatusCode)
         Start-Sleep -Seconds 2
         if (Test-Online) { Write-Log 'login OK - internet reachable'; exit 0 }
     } catch {
-        Write-Log ("login POST attempt {0} failed: {1}" -f $i, $_.Exception.Message)
+        Write-Log ("login POST attempt {0}/{1} failed (server busy?): {2}" -f $i, $maxAttempts, $_.Exception.Message)
     }
-    Start-Sleep -Seconds 3
+    if ($i -lt $maxAttempts) {
+        $wait = $backoffSeconds[$i - 1]
+        Write-Log ("waiting {0}s before retry" -f $wait)
+        Start-Sleep -Seconds $wait
+    }
 }
-Write-Log 'login FAILED after all attempts'
+Write-Log 'login FAILED after all attempts (portal may still be congested - it will retry on the next Wi-Fi reconnect)'
 exit 1
